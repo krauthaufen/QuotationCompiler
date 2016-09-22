@@ -1,10 +1,11 @@
 ﻿
+open System
 open Microsoft.FSharp.Quotations
 open Microsoft.FSharp.Quotations.Patterns
 open Microsoft.FSharp.Quotations.DerivedPatterns
 open Microsoft.FSharp.Quotations.ExprShape
 open QuotationCompiler
-
+open Microsoft.FSharp.Compiler.SourceCodeServices
 
 [<ReflectedDefinition>]
 type ThingWithPrivateField() =
@@ -21,7 +22,7 @@ let hello() =
     let ea : Expr<obj> = Expr.Value(a) |> Expr.Cast
     let eb : Expr<obj> = Expr.Value(b) |> Expr.Cast
 
-    <@ %ea, %eb @> |> QuotationCompiler.Eval //|> unbox<unit -> obj * obj>
+    <@ fun (a : int) (b : int) -> %ea, %eb @> |> QuotationCompiler.Eval //|> unbox<unit -> obj * obj>
 
 
 
@@ -34,9 +35,56 @@ type Helpers =
     static member FieldGet<'a, 'b>(f : FieldInfo, instance : 'a) =
         f.GetValue(instance) |> unbox<'b>
 
+let checker = FSharpChecker.Create()
+/// Get untyped tree for a specified input
+let getUntypedTree file input = 
+  // Get compiler options for the 'project' implied by a single script file
+  let projOptions = 
+      checker.GetProjectOptionsFromScript(file, input)
+      |> Async.RunSynchronously
+
+  // Run the first phase (untyped parsing) of the compiler
+  let parseFileResults = 
+      checker.ParseFileInProject(file, input, projOptions) 
+      |> Async.RunSynchronously
+
+  match parseFileResults.ParseTree with
+  | Some tree -> tree
+  | None -> failwith "Something went wrong during parsing!"
+
+let createType() =
+
+    let rec meth (name : string) (e : Expr) =
+        match e with    
+            | Lambda(v,b) -> 
+                let _,args,b = meth name b
+                name,v::args,b
+            | _ ->
+                name,[],e
+
+    let myObj = obj()
+    let test = 
+        QuotationCompiler.CreateInstance [
+            meth "Bla" <@ fun (a : int) -> 
+                myObj 
+            @>
+
+            meth "Blubb" <@ fun (b : int) -> 
+                b * b 
+            @>
+        ]
+
+    let mi = test.GetType().GetMethod("Bla")
+    let res = mi.Invoke(test, [|1 :> obj|])
+    printfn "%A" (res = myObj)
 
 [<EntryPoint>]
 let main args =
+    createType()
+    Environment.Exit 0
+
+
+    
 
     let fi = typeof<ThingWithPrivateField>.GetField("a", BindingFlags.NonPublic ||| BindingFlags.Instance)
 
@@ -65,10 +113,14 @@ let main args =
         | None ->
             ()
 
-//    let ta, tb = hello()
-//
-//    //let ta, tb = h()
-//    printfn "%A" (System.Object.ReferenceEquals(ta, a))
-//    printfn "%A" (System.Object.ReferenceEquals(tb, b))
+    let test = hello()
+
+    let ta, tb = test 1 2
+
+
+
+    //let ta, tb = h()
+    printfn "%A" (System.Object.ReferenceEquals(ta, a))
+    printfn "%A" (System.Object.ReferenceEquals(tb, b))
 
     0

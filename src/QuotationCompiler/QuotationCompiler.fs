@@ -44,7 +44,7 @@ type QuotationCompiler =
             | Some cmn -> cmn
 
         let compiledFunctionName = defaultArg compiledFunctionName "compiledQuotation"
-        let dependencies, ast, args = Compiler.convertExprToAst compiledModuleName compiledFunctionName expr
+        let dependencies, ast, args = Compiler.convertExprToModule compiledModuleName compiledFunctionName expr
         {
             Tree = ast
             Dependencies = dependencies
@@ -84,6 +84,8 @@ open Microsoft.FSharp.Compiler.SourceCodeServices
 open Microsoft.FSharp.Compiler.SimpleSourceCodeServices
 
 open QuotationCompiler.Utilities
+open QuotationCompiler.Dependencies
+
 
 type QuotationCompiler private () =
 
@@ -186,3 +188,136 @@ type QuotationCompiler private () =
             compiledExprs.GetOrAdd(expr, compile >> box) :?> 'T
         else
             compile ()
+
+
+    /// <summary>
+    ///     Creates a type having the given methods as members
+    /// </summary>
+    /// <param name="methods">A list of methods with their (name, arguments, body)s </param>
+    static member CreateInstance (methods : list<string * list<Var> * Expr>, ?assemblyName : string, ?compiledModuleName : string) =
+        let assemblyName = match assemblyName with None -> sprintf "compiledQuotation_%s" (Guid.NewGuid().ToString("N")) | Some an -> an
+        let compiledModuleName =
+            match compiledModuleName with
+            | None -> sprintf "CompiledQuotationModule-%O" <| Guid.NewGuid()
+            | Some cmn -> cmn
+
+        let dependencies = DependencyContainer()
+        let values = ValueManager()
+        let defaultRange = range0
+
+        let methods =
+            let flags =
+                {
+                    IsInstance = true
+                    IsDispatchSlot = false
+                    IsFinal = false
+                    IsOverrideOrExplicitImpl = false
+                    MemberKind = MemberKind.Member
+                }
+
+            methods |> List.map (fun (name, args, body) ->
+                let def = Compiler.convertExprToAst dependencies values body
+            
+  
+                let pats =
+                    match args with
+                        | [] ->
+                            [ SynPat.Paren(SynPat.Const(SynConst.Unit, defaultRange), defaultRange)]
+                    
+                        | _ ->
+                            args |> List.map (fun v ->
+                                let t = v.Type
+                                let ident = mkIdent range0 v.Name
+                                dependencies.Append t
+                                SynPat.Typed(
+                                    SynPat.Named(SynPat.Wild range0, ident, false, None, defaultRange),
+                                    //SynPat.LongIdent(mkLongIdent defaultRange [ident], None, None, Pats [], None, defaultRange),
+                                    sysTypeToSynType defaultRange t,
+                                    defaultRange
+                                )
+                            )
+
+                let synConsArgs = SynConstructorArgs.Pats pats
+
+                let synPat = 
+                    //SynPat.
+                    //SynPat.InstanceMember(mkIdent defaultRange "x", mkIdent defaultRange name, None, None, defaultRange)
+
+                    let id = LongIdentWithDots([mkIdent defaultRange "x"; mkIdent defaultRange name], [range0; range0])
+
+                    
+                    SynPat.LongIdent(id, None, None, synConsArgs, None, defaultRange)
+//                    let args = SynPat.Tuple(pats, range0)
+//                    SynPat.InstanceMember(mkIdent defaultRange "x", mkIdent defaultRange name, None, None, range0)
+                    
+
+                let binding = 
+                    let names = args |> List.map (fun a -> a.Name)
+                    let argInfo = ("x" :: names) |> List.map (fun a -> [SynArgInfo([], false, Some (mkIdent range0 a))])
+                    let synValData = SynValData.SynValData(Some flags, SynValInfo(argInfo, SynArgInfo([], false, None)), None)
+                    
+                    SynBinding.Binding(
+                        Some SynAccess.Public, 
+                        SynBindingKind.NormalBinding, false, false, [], PreXmlDoc.Empty, 
+                        synValData, synPat, 
+                        None, 
+                        def, 
+                        range0, 
+                        SequencePointInfoForBinding.NoSequencePointAtInvisibleBinding
+                    )
+
+                SynMemberDefn.Member(
+                    binding,
+                    range0
+                )
+            )
+
+
+        let args = values.Values
+        let ctor = 
+            let ctorArgs = 
+                args |> List.map (fun v -> 
+                    SynSimplePat.Typed(
+                        SynSimplePat.Id(v.Ident, None, false, false, false, range0),
+                        sysTypeToSynType range0 v.Type,
+                        range0
+                    )
+                )
+
+            SynMemberDefn.ImplicitCtor(None, [], ctorArgs, None, range0)
+        
+
+        let ident = mkUniqueIdentifier range0
+
+        let comp = SynComponentInfo.ComponentInfo([], [], [], [ident], PreXmlDocEmpty, false, None, range0)
+       
+        //let repr = SynTypeDefnRepr.ObjectModel(SynTypeDefnKind.TyconClass, ctor :: methods, range0)
+        let repr = SynTypeDefnRepr.Simple(SynTypeDefnSimpleRepr.General(SynTypeDefnKind.TyconClass, [], [], [], false, false, None, range0), range0)
+        let def = TypeDefn(comp, repr, ctor :: methods, range0)
+
+        let moduleDecl = SynModuleDecl.Types([def], range0)
+
+        let moduleDeclsToParsedInput (decls : SynModuleDecl list) =
+            let modl = SynModuleOrNamespace([mkIdent defaultRange compiledModuleName], true, decls, PreXmlDoc.Empty,[], None, defaultRange)
+            let file = ParsedImplFileInput("/QuotationCompiler.fs", false, QualifiedNameOfFile(mkIdent defaultRange compiledModuleName), [],[], [modl],false)
+            ParsedInput.ImplFile file
+
+
+        let input = moduleDeclsToParsedInput [moduleDecl]
+
+
+        let dependencies = dependencies.Assemblies |> List.map (fun a -> a.Location)
+        match sscs.Value.CompileToDynamicAssembly([input], assemblyName, dependencies, None, debug = false) with
+        | _, _, Some a -> 
+            let t = a.GetType(compiledModuleName).GetNestedType(ident.idText)
+            let argTypes = args |> List.map (fun a -> a.Type) |> List.toArray
+            let argValues = args |> List.map (fun a -> a.Value) |> List.toArray
+            let ctor = t.GetConstructor(argTypes)
+            if isNull ctor then
+                raise <| new QuotationCompilerException ("ctor failed")
+            else
+                let instance = ctor.Invoke(argValues)
+                instance
+
+        | errors, _, _ -> raise <| new QuotationCompilerException (printErrors errors)
+

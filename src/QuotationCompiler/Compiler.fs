@@ -24,10 +24,7 @@ open QuotationCompiler.Utilities
 /// <param name="compiledFunctionName">Name of compiled function name containing AST.</param>
 /// <param name="expr">Expression to be converted.</param>
 /// <returns>Untyped AST and assembly dependencies.</returns>
-let convertExprToAst (compiledModuleName : string) (compiledFunctionName : string) (expr : Expr) : Assembly list * ParsedInput * list<obj> =
-
-    let dependencies = new DependencyContainer()
-    let values = new ValueManager()
+let convertExprToAst (dependencies : DependencyContainer) (values : ValueManager) (expr : Expr) : SynExpr =
     let defaultRange = defaultArg (tryParseRange expr) range0
 
     let rec exprToAst (expr : Expr) : SynExpr =
@@ -449,6 +446,14 @@ let convertExprToAst (compiledModuleName : string) (compiledFunctionName : strin
         | _ -> notImpl expr
 
     let synExpr = expr |> exprToAst
+    synExpr
+
+let convertExprToModule (compiledModuleName : string) (compiledFunctionName : string) (expr : Expr) : Assembly list * ParsedInput * list<obj> =
+    let defaultRange = defaultArg (tryParseRange expr) range0
+    let dependencies = new DependencyContainer()
+    let values = new ValueManager()
+
+    let synExpr = convertExprToAst dependencies values expr
     let args = values.Values
 
 
