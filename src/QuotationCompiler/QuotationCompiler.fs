@@ -23,6 +23,8 @@ type QuotationAst =
         ModuleName : string
         /// F# function name defining converted quotation
         FunctionName : string
+
+        Arguments : list<obj>
     }
 
 type QuotationCompiler =
@@ -35,20 +37,20 @@ type QuotationCompiler =
     /// <param name="compiledFunctionName">Name of compiled function name containing AST.</param>
     /// <param name="serializer">Serializer used for pickling values spliced into expression trees. Defaults to BinaryFormatter.</param>
     /// <returns>Untyped AST and assembly dependencies.</returns>
-    static member ToParsedInput(expr : Expr, ?compiledModuleName : string, ?compiledFunctionName : string, ?serializer : IExprSerializer) : QuotationAst =
+    static member ToParsedInput(expr : Expr, ?compiledModuleName : string, ?compiledFunctionName : string) : QuotationAst =
         let compiledModuleName =
             match compiledModuleName with
             | None -> sprintf "CompiledQuotationModule-%O" <| Guid.NewGuid()
             | Some cmn -> cmn
 
-        let serializer = match serializer with Some s -> s | None -> new BinaryFormatterExprSerializer() :> IExprSerializer
         let compiledFunctionName = defaultArg compiledFunctionName "compiledQuotation"
-        let dependencies, ast = Compiler.convertExprToAst serializer compiledModuleName compiledFunctionName expr
+        let dependencies, ast, args = Compiler.convertExprToAst compiledModuleName compiledFunctionName expr
         {
             Tree = ast
             Dependencies = dependencies
             ModuleName = compiledModuleName
             FunctionName = compiledFunctionName
+            Arguments = args
         }
 
 #if DEBUG
@@ -77,6 +79,7 @@ open Microsoft.FSharp.Quotations
 
 open Microsoft.FSharp.Compiler
 open Microsoft.FSharp.Compiler.Ast
+open Microsoft.FSharp.Compiler.Range
 open Microsoft.FSharp.Compiler.SourceCodeServices
 open Microsoft.FSharp.Compiler.SimpleSourceCodeServices
 
@@ -85,7 +88,9 @@ open QuotationCompiler.Utilities
 type QuotationCompiler private () =
 
     /// Memoized compiled expression trees
+    static let compiledDelayedExprs = new ConcurrentDictionary<Expr, obj>(new ExprEqualityComparer())
     static let compiledExprs = new ConcurrentDictionary<Expr, obj>(new ExprEqualityComparer())
+    static let sscs = lazy (new SimpleSourceCodeServices())
 
     static let printErrors (errors : FSharpErrorInfo []) =
         if Array.isEmpty errors then
@@ -108,28 +113,46 @@ type QuotationCompiler private () =
         let assemblyName = match assemblyName with None -> sprintf "compiledQuotation_%s" (Guid.NewGuid().ToString("N")) | Some an -> an
         let targetDirectory = match targetDirectory with None -> Path.GetTempPath() | Some p -> p
         let qast = QuotationCompiler.ToParsedInput(expr, ?compiledModuleName = compiledModuleName, ?compiledFunctionName = compiledFunctionName)
-        let dependencies = qast.Dependencies |> List.map (fun a -> a.Location)
-        let location = Path.Combine(targetDirectory, assemblyName + ".dll")
-        let pdbFile = Path.Combine(targetDirectory, assemblyName + ".pdb")
-        let sscs = new SimpleSourceCodeServices()
-        let errors, code = sscs.Compile([qast.Tree], assemblyName, location, dependencies, executable = false, pdbFile = pdbFile)
-        if code = 0 then location
-        else
-            raise <| new QuotationCompilerException(printErrors errors)
+        match qast.Arguments with
+            | [] ->
+                let dependencies = qast.Dependencies |> List.map (fun a -> a.Location)
+                let location = Path.Combine(targetDirectory, assemblyName + ".dll")
+                let pdbFile = Path.Combine(targetDirectory, assemblyName + ".pdb")
+                let errors, code = sscs.Value.Compile([qast.Tree], assemblyName, location, dependencies, executable = false, pdbFile = pdbFile)
+        
+
+                if code = 0 then location
+                else
+                    raise <| new QuotationCompilerException(printErrors errors)
+            | _ ->
+                raise <| new QuotationCompilerException("cannot compile Quotation with closure-values to assembly")
 
     /// <summary>
     ///     Compiles provided quotation tree to dynamic assembly.
     /// </summary>
     /// <param name="expr">Quotation tree to be compiled.</param>
     /// <param name="assemblyName">Assembly name. Defaults to auto generated name.</param>
-    static member ToDynamicAssembly(expr : Expr, ?assemblyName : string) : MethodInfo =
+    static member ToDynamicAssembly(expr : Expr, ?assemblyName : string) : MethodInfo * obj[] =
         let assemblyName = match assemblyName with None -> sprintf "compiledQuotation_%s" (Guid.NewGuid().ToString("N")) | Some an -> an
         let qast = QuotationCompiler.ToParsedInput(expr)
         let dependencies = qast.Dependencies |> List.map (fun a -> a.Location)
-        let sscs = new SimpleSourceCodeServices()
-        match sscs.CompileToDynamicAssembly([qast.Tree], assemblyName, dependencies, None, debug = false) with
-        | _, _, Some a -> a.GetType(qast.ModuleName).GetMethod(qast.FunctionName)
+        match sscs.Value.CompileToDynamicAssembly([qast.Tree], assemblyName, dependencies, None, debug = false) with
+        | _, _, Some a -> 
+            let meth = a.GetType(qast.ModuleName).GetMethod(qast.FunctionName)
+            let args = qast.Arguments |> List.toArray
+            meth, args
+
         | errors, _, _ -> raise <| new QuotationCompilerException (printErrors errors)
+
+    /// <summary>
+    ///     Compiles provided quotation tree to value.
+    /// </summary>
+    /// <param name="expr">Quotation tree to be compiled.</param>
+    /// <param name="assemblyName">Assembly name. Defaults to auto generated name.</param>
+    static member ToObject(expr : Expr, ?assemblyName : string) : obj =
+        let assemblyName = match assemblyName with None -> sprintf "compiledQuotation_%s" (Guid.NewGuid().ToString("N")) | Some an -> an
+        let meth, args = QuotationCompiler.ToDynamicAssembly(expr, assemblyName)
+        meth.Invoke(null, args)
 
     /// <summary>
     ///     Compiles provided quotation tree to function.
@@ -139,16 +162,12 @@ type QuotationCompiler private () =
     static member ToFunc(expr : Expr<'T>, ?useCache:bool) : unit -> 'T =
         let useCache = defaultArg useCache true
         let compile _ =
-            let methodInfo = QuotationCompiler.ToDynamicAssembly expr
-            if typeof<'T> = typeof<unit> then
-                let action = wrapDelegate<Action>(methodInfo)
-                fun () -> action.Invoke() ; Unchecked.defaultof<'T>
-            else
-                let func = wrapDelegate<Func<'T>>(methodInfo)
-                func.Invoke
+            let lambda = Expr.Lambda(Var("unitVar", typeof<unit>), expr.Raw)
+            let value = QuotationCompiler.ToObject(lambda)
+            value :?> unit -> 'T
 
         if useCache then
-            compiledExprs.GetOrAdd(expr, compile >> box) :?> unit -> 'T
+            compiledDelayedExprs.GetOrAdd(expr, compile >> box) :?> unit -> 'T
         else
             compile ()
 
@@ -158,4 +177,12 @@ type QuotationCompiler private () =
     /// <param name="expr">Quotation tree to be compiled.</param>
     /// <param name="useCache">Keep compiled functions for syntactically equal quotations in cache. Defaults to true.</param>
     static member Eval(expr : Expr<'T>, ?useCache : bool) : 'T =
-        QuotationCompiler.ToFunc(expr, ?useCache = useCache) ()
+        let useCache = defaultArg useCache true
+        let compile _ =
+            let value = QuotationCompiler.ToObject(expr.Raw)
+            value :?> 'T
+
+        if useCache then
+            compiledExprs.GetOrAdd(expr, compile >> box) :?> 'T
+        else
+            compile ()

@@ -15,7 +15,6 @@ open Microsoft.FSharp.Compiler.Range
 
 open QuotationCompiler.Dependencies
 open QuotationCompiler.Utilities
-open QuotationCompiler.Utilities.Pickle
 
 /// <summary>
 ///     Converts provided quotation to an untyped F# AST
@@ -25,10 +24,10 @@ open QuotationCompiler.Utilities.Pickle
 /// <param name="compiledFunctionName">Name of compiled function name containing AST.</param>
 /// <param name="expr">Expression to be converted.</param>
 /// <returns>Untyped AST and assembly dependencies.</returns>
-let convertExprToAst (serializer : IExprSerializer) (compiledModuleName : string) (compiledFunctionName : string) (expr : Expr) : Assembly list * ParsedInput =
+let convertExprToAst (compiledModuleName : string) (compiledFunctionName : string) (expr : Expr) : Assembly list * ParsedInput * list<obj> =
 
     let dependencies = new DependencyContainer()
-    let pickles = new PickledValueManager(serializer)
+    let values = new ValueManager()
     let defaultRange = defaultArg (tryParseRange expr) range0
 
     let rec exprToAst (expr : Expr) : SynExpr =
@@ -62,7 +61,7 @@ let convertExprToAst (serializer : IExprSerializer) (compiledModuleName : string
                 SynExpr.Typed(SynExpr.Null range, synTy, range)
 
             | _ -> 
-                let ident = pickles.Append(obj, t)                
+                let ident = values.Append(obj, t)                
                 SynExpr.Ident(ident)
 
         | Var v ->
@@ -411,7 +410,7 @@ let convertExprToAst (serializer : IExprSerializer) (compiledModuleName : string
             let synBody = exprToAst body
             SynExpr.For(SequencePointAtForLoop range, varIdent, synStartExpr, true, synEndExpr, synBody, range)
 
-        | Quote q -> 
+        | QuoteTyped q | QuoteRaw q -> 
             let synQuote = exprToAst q
             let ident = SynExpr.Ident(mkIdent range "op_Quotation")
             SynExpr.Quote(ident, false, synQuote, false, range)
@@ -427,26 +426,45 @@ let convertExprToAst (serializer : IExprSerializer) (compiledModuleName : string
             
         | _ -> notImpl expr
 
-    let synExprToLetBinding (expr : SynExpr) =
-        let synConsArgs = SynConstructorArgs.Pats [ SynPat.Paren(SynPat.Const(SynConst.Unit, defaultRange), defaultRange)]
-        let synPat = SynPat.LongIdent(mkLongIdent defaultRange [mkIdent defaultRange compiledFunctionName], None, None, synConsArgs, None, defaultRange)
-        // create a `let func () = () ; expr` binding to force return type compatible with quotation type.
-        let seqExpr = SynExpr.Sequential(SequencePointsAtSeq, true, SynExpr.Const(SynConst.Unit, defaultRange), expr, defaultRange)
-        let binding = mkBinding defaultRange false synPat seqExpr
-        SynModuleDecl.Let(false, [binding], defaultRange)
+    let synExpr = expr |> exprToAst
+    let args = values.Values
 
-    let mkPickleBinding (entry : ExprPickle) =
-        let synUnPickle = exprToAst entry.Expr
-        let synPat = SynPat.Named(SynPat.Wild range0, entry.Ident, false, None, range0)
-        let binding = mkBinding range0 true synPat synUnPickle
-        SynModuleDecl.Let(false, [binding], range0)
+
+    let synExprToLetBinding (expr : SynExpr) =
+        let synConsArgs = 
+            match args with
+                | [] ->
+                    SynConstructorArgs.Pats [ SynPat.Paren(SynPat.Const(SynConst.Unit, defaultRange), defaultRange)]
+                | args ->
+                    let pats =
+                        args |> List.map (fun v ->
+                            let t = v.Value.GetType()
+                            dependencies.Append t
+                            SynPat.Typed(
+                                SynPat.LongIdent(mkLongIdent defaultRange [v.Ident], None, None, Pats [], None, defaultRange),
+                                sysTypeToSynType defaultRange t,
+                                defaultRange
+                            )
+                        )
+                    SynConstructorArgs.Pats pats
+
+        let synPat = SynPat.LongIdent(mkLongIdent defaultRange [mkIdent defaultRange compiledFunctionName], None, None, synConsArgs, None, defaultRange)
+        // create a `let func [args] = () ; expr` binding to force return type compatible with quotation type.
+        let seqExpr = SynExpr.Sequential(SequencePointsAtSeq, true, SynExpr.Const(SynConst.Unit, defaultRange), expr, defaultRange)
+        //let binding = mkBinding defaultRange false synPat seqExpr
+
+        let binding = 
+            let argInfo = args |> List.map (fun a -> [SynArgInfo([], false, Some a.Ident)])
+            let synValData = SynValData.SynValData(None, SynValInfo(argInfo, SynArgInfo([], false, None)), None)
+            SynBinding.Binding(None, SynBindingKind.NormalBinding, false, false, [], PreXmlDoc.Empty, synValData, synPat, None, seqExpr, range0, SequencePointInfoForBinding.SequencePointAtBinding defaultRange)
+
+        SynModuleDecl.Let(false, [binding], defaultRange)
 
     let moduleDeclsToParsedInput (decls : SynModuleDecl list) =
         let modl = SynModuleOrNamespace([mkIdent defaultRange compiledModuleName], true, decls, PreXmlDoc.Empty,[], None, defaultRange)
         let file = ParsedImplFileInput("/QuotationCompiler.fs", false, QualifiedNameOfFile(mkIdent defaultRange compiledModuleName), [],[], [modl],false)
         ParsedInput.ImplFile file
 
-    let synExpr = expr |> exprToAst |> synExprToLetBinding
-    let pickleBindings = pickles.PickledValues |> List.map mkPickleBinding 
-    let parsedInput = pickleBindings @ [synExpr] |> moduleDeclsToParsedInput
-    dependencies.Assemblies, parsedInput
+    let binding = synExpr |> synExprToLetBinding
+    let parsedInput = [binding] |> moduleDeclsToParsedInput
+    dependencies.Assemblies, parsedInput, List.map (fun v -> v.Value) args

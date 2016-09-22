@@ -54,7 +54,7 @@
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="Types.fs" />
     <Compile Include="Utils.fs" />
-    <Compile Include="Pickle.fs" />
+    <Compile Include="Values.fs" />
     <Compile Include="ExprEqualityComparer.fs" />
     <Compile Include="Dependencies.fs" />
     <Compile Include="Compiler.fs" />
