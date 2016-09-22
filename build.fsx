@@ -25,7 +25,7 @@ let gitRaw = environVarOrDefault "gitRaw" "https://raw.github.com/nessos"
 
 
 
-let testAssemblies = "bin/Release/*Tests*.dll"
+let testAssemblies = "bin/Release/*Tests*.exe"
 //
 //// --------------------------------------------------------------------------------------
 //// The rest of the code is standard F# build script 

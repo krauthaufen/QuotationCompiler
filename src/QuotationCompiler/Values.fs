@@ -27,6 +27,9 @@ type ValueBinding =
         Ident : Ident
         /// The value.
         Value : obj
+
+        /// The declared type of the value.
+        Type : Type
     }
 
 
@@ -39,7 +42,7 @@ type ValueManager() =
         let id, isFirst = idGen.GetId obj
         if isFirst then
             let ident = mkUniqueIdentifier range0
-            container.Add(id, { Ident = ident ; Value = obj })
+            container.Add(id, { Ident = ident ; Value = obj; Type = ty })
             ident
         else
             let entry = container.[id] in entry.Ident

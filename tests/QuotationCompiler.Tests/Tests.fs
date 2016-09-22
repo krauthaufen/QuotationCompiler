@@ -392,3 +392,12 @@ let ``4. Query expressions`` () =
             }
         @>
     |> Seq.length |> should equal 5
+
+[<Test>]
+let ``5. Closure values`` () =
+    let a = obj()
+    compileRun 
+        <@
+            a
+        @>
+    |> should equal a

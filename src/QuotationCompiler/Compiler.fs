@@ -380,23 +380,45 @@ let convertExprToAst (compiledModuleName : string) (compiledFunctionName : strin
 
         | FieldGet(instance, fieldInfo) ->
             dependencies.Append fieldInfo.DeclaringType
-            match instance with
-            | None -> sysMemberToSynMember range fieldInfo
-            | Some inst ->
-                let synInst = exprToAst inst
-                SynExpr.DotGet(synInst, range, mkLongIdent range [mkIdent range (getFSharpName fieldInfo)], range)
+
+            if fieldInfo.IsPublic then
+                match instance with
+                | None -> sysMemberToSynMember range fieldInfo
+                | Some inst ->
+                    let synInst = exprToAst inst
+                    SynExpr.DotGet(synInst, range, mkLongIdent range [mkIdent range (getFSharpName fieldInfo)], range)
+
+            else
+                match instance with
+                | None -> 
+                    Expr.Coerce(<@@ fieldInfo.GetValue(null) @@>, fieldInfo.FieldType) |> exprToAst
+                | Some inst ->
+                    let oinst = Expr.Coerce(inst, typeof<obj>)
+                    Expr.Coerce(<@@ fieldInfo.GetValue(%%oinst) @@>, fieldInfo.FieldType) |> exprToAst
+
 
         | FieldSet(instance, fieldInfo, value) ->
             dependencies.Append fieldInfo.DeclaringType
-            let synValue = exprToAst value
-            match instance with
-            | None ->
-                let ident = LongIdentWithDots(getMemberPath range fieldInfo, [])
-                SynExpr.LongIdentSet(ident, synValue, range)
-            | Some inst ->
-                let synInst = exprToAst inst
-                SynExpr.DotSet(synInst, LongIdentWithDots([mkIdent range fieldInfo.Name], []), synValue, range)
-        
+            if fieldInfo.IsPublic then
+                let synValue = exprToAst value
+                match instance with
+                | None ->
+                    let ident = LongIdentWithDots(getMemberPath range fieldInfo, [])
+                    SynExpr.LongIdentSet(ident, synValue, range)
+                | Some inst ->
+                    let synInst = exprToAst inst
+                    SynExpr.DotSet(synInst, LongIdentWithDots([mkIdent range fieldInfo.Name], []), synValue, range)
+            else
+                match instance with
+                | None ->
+                    let ovalue = Expr.Coerce(value, typeof<obj>)
+                    exprToAst <@@ fieldInfo.SetValue(null, %%ovalue) @@>
+                    
+                | Some instance -> 
+                    let oinstance = Expr.Coerce(instance, typeof<obj>)
+                    let ovalue = Expr.Coerce(value, typeof<obj>)
+                    exprToAst <@@ fieldInfo.SetValue(%%oinstance, %%ovalue) @@>
+
         | VarSet(v, value) ->
             dependencies.Append v.Type
             let synValue = exprToAst value
@@ -438,7 +460,7 @@ let convertExprToAst (compiledModuleName : string) (compiledFunctionName : strin
                 | args ->
                     let pats =
                         args |> List.map (fun v ->
-                            let t = v.Value.GetType()
+                            let t = v.Type
                             dependencies.Append t
                             SynPat.Typed(
                                 SynPat.LongIdent(mkLongIdent defaultRange [v.Ident], None, None, Pats [], None, defaultRange),
