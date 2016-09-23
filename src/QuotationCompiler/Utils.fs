@@ -157,6 +157,10 @@ module internal Utils =
             let synElem = t.GetElementType() |> sysTypeToSynType range
             let rk = t.GetArrayRank()
             SynType.Array(rk, synElem, range)
+
+        elif t.IsGenericParameter then
+            SynType.Var(Typar(mkIdent range t.Name, TyparStaticReq.NoStaticReq, false), range)
+
         else
             let liwd = LongIdentWithDots(getMemberPath range t, [range])
             SynType.LongIdent liwd

@@ -138,6 +138,8 @@ type QuotationCompiler private () =
         let assemblyName = match assemblyName with None -> sprintf "compiledQuotation_%s" (Guid.NewGuid().ToString("N")) | Some an -> an
         let qast = QuotationCompiler.ToParsedInput(expr)
         let dependencies = qast.Dependencies |> List.map (fun a -> a.Location)
+
+
         match sscs.Value.CompileToDynamicAssembly([qast.Tree], assemblyName, dependencies, None, debug = false) with
         | _, _, Some a -> 
             let meth = a.GetType(qast.ModuleName).GetMethod(qast.FunctionName)
@@ -218,7 +220,27 @@ type QuotationCompiler private () =
             methods |> List.map (fun (name, args, body) ->
                 let def = Compiler.convertExprToAst dependencies values body
             
+                let isGeneric =
+                    if body.Type.ContainsGenericParameters then true
+                    else args |> List.exists (fun a -> a.Type.ContainsGenericParameters)
+
+                let typePars = 
+                    if isGeneric then
+                        let rec getAll (t : Type) =
+                            if t.IsGenericParameter then [t]
+                            elif t.IsPrimitive then []
+                            elif t.IsGenericType then 
+                                t.GetGenericArguments() |> Array.toList |> List.collect getAll
+                            else
+                                []  
   
+                        let args = 
+                            (getAll body.Type) :: (args |> List.map (fun a -> getAll a.Type)) |> List.concat |> System.Collections.Generic.HashSet
+                        
+                        args |> Seq.toList |> List.map (fun t -> Typar(mkIdent range0 t.Name, TyparStaticReq.NoStaticReq, false))
+                    else
+                        []
+
                 let pats =
                     match args with
                         | [] ->
@@ -237,6 +259,9 @@ type QuotationCompiler private () =
                                 )
                             )
 
+  
+
+                let pats = [SynPat.Tuple(pats, range0)]
                 let synConsArgs = SynConstructorArgs.Pats pats
 
                 let self = mkUniqueIdentifier range0
@@ -244,12 +269,23 @@ type QuotationCompiler private () =
                 let synPat = 
                     let id = LongIdentWithDots([self; mkIdent defaultRange name], [range0; range0])
 
-                    
-                    SynPat.LongIdent(id, None, None, synConsArgs, None, defaultRange)
+                    match typePars with
+                        | [] ->
+                            SynPat.LongIdent(id, None, None, synConsArgs, None, defaultRange)
+                        | pars ->
+                            let parDecls = typePars |> List.map (fun tp -> SynTyparDecl.TyparDecl([], tp))
+                            let decls = SynValTyparDecls.SynValTyparDecls(parDecls, false, [])
+                            SynPat.LongIdent(id, None, Some decls, synConsArgs, None, defaultRange)
 
                 let binding = 
                     let names = args |> List.map (fun a -> a.Name)
-                    let argInfo = (self.idText :: names) |> List.map (fun a -> [SynArgInfo([], false, Some (mkIdent range0 a))])
+
+                    let argInfo =
+                        [
+                            [SynArgInfo([], false, Some self)]
+                            names |> List.map (fun a -> SynArgInfo([], false, Some (mkIdent range0 a)))
+                        ]
+
                     let synValData = SynValData.SynValData(Some flags, SynValInfo(argInfo, SynArgInfo([], false, None)), None)
                     
                     SynBinding.Binding(

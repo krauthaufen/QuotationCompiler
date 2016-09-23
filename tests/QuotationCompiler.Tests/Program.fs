@@ -1,5 +1,7 @@
 ﻿
 open System
+open System.Reflection
+open System.Diagnostics
 open Microsoft.FSharp.Quotations
 open Microsoft.FSharp.Quotations.Patterns
 open Microsoft.FSharp.Quotations.DerivedPatterns
@@ -10,47 +12,17 @@ open Microsoft.FSharp.Compiler.SourceCodeServices
 [<ReflectedDefinition>]
 type ThingWithPrivateField() =
     let mutable a = 10
+
+    static member Sepp(a : seq<'a>, b : int) =
+        printfn "%A" a
+
+    static member Seppy(a : ref<'a>, b : int) =
+        printfn "%A" a
+
     member x.Test(b : int) =
         let res = a + b
         a <- a + 1
         res
-
-// 1. hello world
-let a = obj()
-let b = obj()
-let hello() = 
-    let ea : Expr<obj> = Expr.Value(a) |> Expr.Cast
-    let eb : Expr<obj> = Expr.Value(b) |> Expr.Cast
-
-    <@ fun (a : int) (b : int) -> %ea, %eb @> |> QuotationCompiler.Eval //|> unbox<unit -> obj * obj>
-
-
-
-open System
-open System.Reflection
-open System.Diagnostics
-
-type Helpers =
-    
-    static member FieldGet<'a, 'b>(f : FieldInfo, instance : 'a) =
-        f.GetValue(instance) |> unbox<'b>
-
-let checker = FSharpChecker.Create()
-/// Get untyped tree for a specified input
-let getUntypedTree file input = 
-  // Get compiler options for the 'project' implied by a single script file
-  let projOptions = 
-      checker.GetProjectOptionsFromScript(file, input)
-      |> Async.RunSynchronously
-
-  // Run the first phase (untyped parsing) of the compiler
-  let parseFileResults = 
-      checker.ParseFileInProject(file, input, projOptions) 
-      |> Async.RunSynchronously
-
-  match parseFileResults.ParseTree with
-  | Some tree -> tree
-  | None -> failwith "Something went wrong during parsing!"
 
 let createType() =
 
@@ -62,20 +34,29 @@ let createType() =
             | _ ->
                 name,[],e
 
+    let mk (e0) =
+        match e0 with   
+            | Microsoft.FSharp.Quotations.DerivedPatterns.Lambdas(args, b) ->
+                let rec mk (args : list<Var>) (e : Expr) =
+                    match args with
+                        | [] -> e
+                        | h :: r -> Expr.Lambda(h, mk r e)
+
+                mk (List.concat args) b
+            | _ -> e0
+    let e0 = typeof<ThingWithPrivateField>.GetMethod("Sepp") |> Expr.TryGetReflectedDefinition |> Option.get |> mk
+    let e1 = typeof<ThingWithPrivateField>.GetMethod("Seppy") |> Expr.TryGetReflectedDefinition |> Option.get |> mk
+
+
     let myObj = obj()
     let target, methods = 
         QuotationCompiler.CreateInstance [
-            meth "Bla" <@ fun (a : int) -> 
-                myObj 
-            @>
-
-            meth "Blubb" <@ fun (b : int) -> 
-                b * b 
-            @>
+            meth "Bla" e0
+            meth "Bla" e1
         ]
 
-    let mi = methods.[0]
-    let res = mi.Invoke(target, [|1 :> obj|])
+    let mi = methods.[0].MakeGenericMethod [| typeof<int> |]
+    let res = mi.Invoke(target, [| [1;2;3] :> obj; 1 :> obj|])
     printfn "%A" (res = myObj)
 
 [<EntryPoint>]
@@ -113,14 +94,5 @@ let main args =
         | None ->
             ()
 
-    let test = hello()
-
-    let ta, tb = test 1 2
-
-
-
-    //let ta, tb = h()
-    printfn "%A" (System.Object.ReferenceEquals(ta, a))
-    printfn "%A" (System.Object.ReferenceEquals(tb, b))
 
     0
