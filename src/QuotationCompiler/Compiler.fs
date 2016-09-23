@@ -32,6 +32,7 @@ let convertExprToAst (dependencies : DependencyContainer) (values : ValueManager
         match expr with
         // parse for constants
         | Value(obj, t) ->
+            dependencies.Append(t)
             match obj with
             | :? bool as b when t = typeof<bool> -> SynExpr.Const(SynConst.Bool b, range)
             | :? byte as b when t = typeof<byte> -> SynExpr.Const(SynConst.Byte b, range)
@@ -58,6 +59,7 @@ let convertExprToAst (dependencies : DependencyContainer) (values : ValueManager
                 SynExpr.Typed(SynExpr.Null range, synTy, range)
 
             | _ -> 
+                
                 let ident = values.Append(obj, t)                
                 SynExpr.Ident(ident)
 

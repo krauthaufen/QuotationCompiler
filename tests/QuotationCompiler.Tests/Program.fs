@@ -63,7 +63,7 @@ let createType() =
                 name,[],e
 
     let myObj = obj()
-    let test = 
+    let target, methods = 
         QuotationCompiler.CreateInstance [
             meth "Bla" <@ fun (a : int) -> 
                 myObj 
@@ -74,8 +74,8 @@ let createType() =
             @>
         ]
 
-    let mi = test.GetType().GetMethod("Bla")
-    let res = mi.Invoke(test, [|1 :> obj|])
+    let mi = methods.[0]
+    let res = mi.Invoke(target, [|1 :> obj|])
     printfn "%A" (res = myObj)
 
 [<EntryPoint>]

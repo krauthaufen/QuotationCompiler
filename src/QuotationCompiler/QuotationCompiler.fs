@@ -239,21 +239,17 @@ type QuotationCompiler private () =
 
                 let synConsArgs = SynConstructorArgs.Pats pats
 
-                let synPat = 
-                    //SynPat.
-                    //SynPat.InstanceMember(mkIdent defaultRange "x", mkIdent defaultRange name, None, None, defaultRange)
+                let self = mkUniqueIdentifier range0
 
-                    let id = LongIdentWithDots([mkIdent defaultRange "x"; mkIdent defaultRange name], [range0; range0])
+                let synPat = 
+                    let id = LongIdentWithDots([self; mkIdent defaultRange name], [range0; range0])
 
                     
                     SynPat.LongIdent(id, None, None, synConsArgs, None, defaultRange)
-//                    let args = SynPat.Tuple(pats, range0)
-//                    SynPat.InstanceMember(mkIdent defaultRange "x", mkIdent defaultRange name, None, None, range0)
-                    
 
                 let binding = 
                     let names = args |> List.map (fun a -> a.Name)
-                    let argInfo = ("x" :: names) |> List.map (fun a -> [SynArgInfo([], false, Some (mkIdent range0 a))])
+                    let argInfo = (self.idText :: names) |> List.map (fun a -> [SynArgInfo([], false, Some (mkIdent range0 a))])
                     let synValData = SynValData.SynValData(Some flags, SynValInfo(argInfo, SynArgInfo([], false, None)), None)
                     
                     SynBinding.Binding(
@@ -316,8 +312,9 @@ type QuotationCompiler private () =
             if isNull ctor then
                 raise <| new QuotationCompilerException ("ctor failed")
             else
+                let methods = t.GetMethods(BindingFlags.Instance ||| BindingFlags.Public ||| BindingFlags.DeclaredOnly)
                 let instance = ctor.Invoke(argValues)
-                instance
+                instance, methods
 
         | errors, _, _ -> raise <| new QuotationCompilerException (printErrors errors)
 
