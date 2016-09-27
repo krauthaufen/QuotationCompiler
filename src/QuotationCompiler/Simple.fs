@@ -33,28 +33,56 @@ module Utils =
         override x.GetValue(_) = failwith "not supported"
         override x.SetValue(_,_,_,_,_) = failwith "not supported"
 
+    type CustomParameterInfo(name : string, t : Type) =
+        inherit ParameterInfo()
+
+        override x.Attributes = ParameterAttributes.None
+        override x.CustomAttributes = Seq.empty
+        override x.GetCustomAttributes(_) = [||]
+        override x.GetCustomAttributes(_,_) = [||]
+        override x.GetCustomAttributesData() = System.Collections.Generic.List<CustomAttributeData>() :> _
+        override x.IsDefined(_,_) = false
+        override x.HasDefaultValue = false
+        override x.DefaultValue = null
+
+        override x.Name = name
+        override x.ParameterType = t
+
+
     type CustomMethod(parent : Type, name : string, argTypes : Type[], retType : Type) =
         inherit MethodInfo()
+
+        let par = argTypes |> Array.mapi (fun i t -> CustomParameterInfo(sprintf "arg%d" i, t) :> ParameterInfo)
 
         override x.ReflectedType = parent
         override x.DeclaringType = parent
         override x.Name = name
         override x.Attributes = MethodAttributes.Public
+        override x.ReturnType = retType
 
         override x.GetCustomAttributes(_) = [||]
         override x.GetCustomAttributes(_,_) = [||]
         override x.IsDefined(_,_) = false
 
+        override x.GetParameters() = par
+        override x.GetMethodImplementationFlags() = MethodImplAttributes.IL
+        override x.GetBaseDefinition() = x :> MethodInfo
+        override x.ReturnTypeCustomAttributes = 
+            { new ICustomAttributeProvider with
+                member x.GetCustomAttributes(_) = [||]
+                member x.GetCustomAttributes(_,_) = [||]
+                member x.IsDefined(_,_) = false
+            }
+
 
         override x.Invoke(_,_,_,_,_) = failwith ""
         override x.MethodHandle = failwith ""
-        override x.GetMethodImplementationFlags() = failwith ""
-        override x.GetParameters() = failwith ""
-        override x.GetBaseDefinition() = failwith ""
-        override x.ReturnTypeCustomAttributes = failwith ""
 
     type CustomConstructor(parent : Type, argTypes : Type[]) =
         inherit ConstructorInfo()
+
+        let par = argTypes |> Array.mapi (fun i t -> CustomParameterInfo(sprintf "arg%d" i, t) :> ParameterInfo)
+
 
         override x.ReflectedType = parent
         override x.DeclaringType = parent
@@ -63,13 +91,13 @@ module Utils =
         override x.GetCustomAttributes(_) = [||]
         override x.GetCustomAttributes(_,_) = [||]
         override x.IsDefined(_,_) = false
+        override x.GetMethodImplementationFlags() = MethodImplAttributes.IL
+        override x.GetParameters() = par
 
         override x.Name = failwith ""
         override x.Invoke(_,_,_,_,_) = failwith ""
         override x.Invoke(_,_,_,_) = failwith ""
         override x.MethodHandle = failwith ""
-        override x.GetMethodImplementationFlags() = failwith ""
-        override x.GetParameters() = failwith ""
 
     type CustomProperty(parent : Type, name : string, valueType : Type) =
         inherit PropertyInfo()
@@ -88,8 +116,6 @@ module Utils =
         override x.IsDefined(_,_) = false
 
         override x.PropertyType = valueType
-        override x.SetValue(_,_,_,_,_,_) = failwith ""
-        override x.GetValue(_,_,_,_,_) = failwith ""
         override x.GetAccessors(_) = acc
         override x.GetGetMethod(_) = get
         override x.GetSetMethod(_) = set
@@ -97,6 +123,9 @@ module Utils =
         override x.Attributes = PropertyAttributes.None
         override x.CanRead = true
         override x.CanWrite = true
+
+        override x.SetValue(_,_,_,_,_,_) = failwith ""
+        override x.GetValue(_,_,_,_,_) = failwith ""
 
     type CustomType(baseType : Type, name : string) =
         inherit Type()
@@ -122,25 +151,27 @@ module Utils =
         override x.GetCustomAttributes(_,_) = [||]
         override x.GetCustomAttributes(_) = [||]
         override x.IsDefined(_,_) = false
+        override x.GetAttributeFlagsImpl() = TypeAttributes.Class ||| TypeAttributes.Public
+        override x.AssemblyQualifiedName = sprintf "Temp.%s" name
+        override x.Namespace = "Temp"
 
-        override x.GetMethodImpl(name,flags,binder,_,argTypes,_) = failwith "not supported"
-        override x.Namespace = failwith "not supported"
-        override x.AssemblyQualifiedName = failwith "not supported"
+        override x.GetNestedType(_,_) = null
+        override x.GetNestedTypes(_) = [||]
+        override x.GetConstructors(_) = [||]
+        override x.GetMethods(_) = [||]
+        override x.GetInterfaces() = [||]
+        override x.GetEvents(_) = [||]
+        override x.GetProperties(_) = [||]
+        override x.GetMembers(_) = [||]
+
+        override x.GetMethodImpl(name,flags,binder,_,argTypes,_) = null
+        override x.GetConstructorImpl(_,_,_,_,_) = null
+        override x.GetInterface(_,_) = null
+        override x.GetEvent(_,_) = null
+        override x.GetPropertyImpl(_,_,_,_,_,_) = null
+        override x.GetElementType() = null
+
         override x.InvokeMember(_,_,_,_,_,_,_,_) = failwith "not supported"
-        override x.GetConstructorImpl(_,_,_,_,_) = failwith "not supported"
-        override x.GetConstructors(_) = failwith "not supported"
-        override x.GetMethods(_) = failwith "not supported"
-        override x.GetInterface(_,_) = failwith "not supported"
-        override x.GetInterfaces() = failwith "not supported"
-        override x.GetEvent(_,_) = failwith "not supported"
-        override x.GetEvents(_) = failwith "not supported"
-        override x.GetPropertyImpl(_,_,_,_,_,_) = failwith "not supported"
-        override x.GetProperties(_) = failwith "not supported"
-        override x.GetNestedType(_,_) = failwith "not supported"
-        override x.GetNestedTypes(_) = failwith "not supported"
-        override x.GetMembers(_) = failwith "not supported"
-        override x.GetAttributeFlagsImpl() = failwith "not supported"
-        override x.GetElementType() = failwith "not supported"
 
 [<AutoOpen>]
 module ExpressionExtensions = 

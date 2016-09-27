@@ -66,9 +66,9 @@ module Utils =
         member m.GetOptionalParameterInfo () =
             m.GetParameters()
             |> Seq.map (fun p -> 
-                if p.GetCustomAttributes<OptionalArgumentAttribute>() |> Seq.isEmpty then None
-                else
-                    Some p.Name)
+                let s = p.IsOptional //.GetCustomAttributes<OptionalArgumentAttribute>()
+                if s then Some p.Name
+                else None)
             |> Seq.toList
 
     /// build a range value parsing the Expr.CustomAttributes property.
