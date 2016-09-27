@@ -1,4 +1,4 @@
-﻿module internal QuotationCompiler.Compiler
+﻿module QuotationCompiler.Compiler
 
 open System
 open System.Reflection

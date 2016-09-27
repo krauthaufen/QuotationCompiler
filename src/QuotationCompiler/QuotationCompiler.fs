@@ -322,8 +322,6 @@ type QuotationCompiler private () =
         let ident = mkUniqueIdentifier range0
 
         let comp = SynComponentInfo.ComponentInfo([], [], [], [ident], PreXmlDocEmpty, false, None, range0)
-       
-        //let repr = SynTypeDefnRepr.ObjectModel(SynTypeDefnKind.TyconClass, ctor :: methods, range0)
         let repr = SynTypeDefnRepr.Simple(SynTypeDefnSimpleRepr.General(SynTypeDefnKind.TyconClass, [], [], [], false, false, None, range0), range0)
         let def = TypeDefn(comp, repr, ctor :: methods, range0)
 

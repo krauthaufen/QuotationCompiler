@@ -13,7 +13,7 @@ open Microsoft.FSharp.Compiler.Ast
 open Microsoft.FSharp.Compiler.Range
     
 [<AutoOpen>]
-module internal Utils =
+module Utils =
 
     let inline notImpl<'T> e : 'T = raise <| new NotImplementedException(sprintf "%O" e)
 
@@ -47,7 +47,8 @@ module internal Utils =
     type MemberInfo with
         member m.TryGetCustomAttribute<'Attr when 'Attr :> System.Attribute> () =
             let attrs = m.GetCustomAttributes<'Attr> ()
-            if Seq.isEmpty attrs then None
+            if isNull (attrs :> obj) then None
+            elif Seq.isEmpty attrs then None
             else
                 Some(Seq.head attrs)
 
@@ -96,6 +97,8 @@ module internal Utils =
         let name = "_bind_" + suffix
         mkIdent range name
 
+    open Microsoft.FSharp.Compiler.SourceCodeServices
+    open Yaaf.FSharp.Scripting
     let private moduleSuffixRegex = new Regex(@"^(.*)Module$", RegexOptions.Compiled)
     let private fsharpPrefixRegex = new Regex(@"^FSharp(.*)(`[0-9]+)?$", RegexOptions.Compiled)
     /// recover the F# source name for given member declaration
@@ -103,23 +106,29 @@ module internal Utils =
         match m.TryGetCustomAttribute<CompilationSourceNameAttribute> () with
         | Some a -> a.SourceName
         | None ->
-
-        // this is a hack; need a better solution in the long term
-        // see https://visualfsharp.codeplex.com/workitem/177
-        if m.Assembly = typeof<int option>.Assembly && fsharpPrefixRegex.IsMatch m.Name then
-            let rm = fsharpPrefixRegex.Match m.Name
-            rm.Groups.[1].Value
-        elif m.Name = "DefaultAsyncBuilder" && m.Assembly = typeof<int option>.Assembly then
-            "async"
-        else
-
-        match m, m.TryGetCustomAttribute<CompilationRepresentationAttribute> () with
-        | :? Type as t, Some attr when attr.Flags.HasFlag CompilationRepresentationFlags.ModuleSuffix && FSharpType.IsModule t ->
-            let rm = moduleSuffixRegex.Match m.Name
-            if rm.Success then rm.Groups.[1].Value
+            // this is a hack; need a better solution in the long term
+            // see https://visualfsharp.codeplex.com/workitem/177
+            if m.Assembly = typeof<int option>.Assembly && fsharpPrefixRegex.IsMatch m.Name then
+                let rm = fsharpPrefixRegex.Match m.Name
+                rm.Groups.[1].Value
+            elif m.Name = "DefaultAsyncBuilder" && m.Assembly = typeof<int option>.Assembly then
+                "async"
             else
-                m.Name
-        | _ -> m.Name.Split('`').[0]
+
+
+            match m, m.TryGetCustomAttribute<CompilationRepresentationAttribute> (), m.TryGetCustomAttribute<CompiledNameAttribute>() with
+            | :? Type as t, Some attr, None when attr.Flags.HasFlag CompilationRepresentationFlags.ModuleSuffix && FSharpType.IsModule t ->
+                let rm = moduleSuffixRegex.Match m.Name
+                if rm.Success then rm.Groups.[1].Value
+                else m.Name
+            | :? Type as t, None, Some _ ->
+                match FSharpAssembly.FromAssembly m.Assembly with
+                    | Some ass ->
+                        match ass.FindType t with
+                            | Some ent -> ent.LogicalName
+                            | None -> failwith "i hate this"
+                    | _ -> failwith "i hate this"
+            | _ -> m.Name.Split('`').[0]
 
     /// generate full path for given memberinfo
     let getMemberPath range (m : MemberInfo) =

@@ -1,4 +1,4 @@
-﻿module internal QuotationCompiler.Dependencies
+﻿module QuotationCompiler.Dependencies
 
 open System
 open System.Collections.Generic

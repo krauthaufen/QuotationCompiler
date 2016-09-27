@@ -10,3 +10,4 @@ nuget Unquote 2.2.2
 nuget FAKE
 nuget nunittestadapter
 nuget Fantomas
+nuget Yaaf.FSharp.Scripting

@@ -8,6 +8,7 @@ open Microsoft.FSharp.Quotations.DerivedPatterns
 open Microsoft.FSharp.Quotations.ExprShape
 open QuotationCompiler
 open Microsoft.FSharp.Compiler.SourceCodeServices
+open QuotationCompiler.Simple
 
 [<ReflectedDefinition>]
 type ThingWithPrivateField() =
@@ -34,6 +35,7 @@ let createType() =
             | _ ->
                 name,[],e
 
+
     let mk (e0) =
         match e0 with   
             | Microsoft.FSharp.Quotations.DerivedPatterns.Lambdas(args, b) ->
@@ -59,11 +61,74 @@ let createType() =
     let res = mi.Invoke(target, [| [1;2;3] :> obj; 1 :> obj|])
     printfn "%A" (res = myObj)
 
+[<CompiledName("FuckYou")>]
+type bla() =
+    member x.A = 1
+
+type A() =
+    inherit System.Collections.Generic.List<int>(10)
+
+
 [<EntryPoint>]
 let main args =
-    createType()
-    Environment.Exit 0
 
+    let o = obj()
+    let moduleType = 
+        let v = Var("a", typeof<int>)
+        let x = Var("x", typeof<int>)
+        let e : Expr<obj> = Expr.Value(o) |> Expr.Cast
+
+        let blabla = Var("blabla", typeof<int>)
+        let blablaex = Expr.Var blabla
+
+        let this = Var("x", typeof<obj>)
+        let b : Expr<System.Collections.Generic.List<int>> = Var("base", typeof<System.Collections.Generic.List<int>>) |> Expr.Var |> Expr.Cast
+
+
+        Compiler.compile {
+            Name = "MyModule"
+            Declarations =
+            [
+                Binding (v, [x], <@ %e @>)
+
+                Class {
+                    Name        = "Bla"
+                    Arguments   = [blabla]
+                    BaseType    = Some (typeof<System.Collections.Generic.List<int>>, [blablaex])
+                    Fields      = [Var("FieldA", typeof<int>)]
+                    Members     = 
+                    [ 
+                        "Hugo", [], (fun x ->
+                            let a : Expr<int> = Expr.FieldGet(x, "FieldA", typeof<int>) |> Expr.Cast
+                            <@ printfn "%A" (%b).Capacity; %a + (%b).Capacity @> :> Expr
+                        )  
+                    ]
+                }
+            ]
+        }
+       
+    let classType = moduleType.GetNestedType("Bla")
+
+    let fi = classType.GetField("FieldA")
+    printfn "FieldA: %A" fi
+
+    classType.BaseType |> printfn "Base: %A"
+
+    let test = moduleType.GetMethod("a").Invoke(null, [|10|]) 
+    test = o |> printfn "a 10 = o: %A"
+
+
+    let ctor = classType.GetConstructor [| typeof<int> |]
+    printfn "ctor: %A" ctor
+
+    let instance = ctor.Invoke [|123 :> obj|]
+    let prop = classType.GetProperty("Hugo")
+    prop.GetValue(instance) |> printfn "0 = %A"
+
+    let l = instance |> unbox<System.Collections.Generic.List<int>>
+    l.Capacity |> printfn "123 = %A"
+
+    Environment.Exit 0
 
     
 
